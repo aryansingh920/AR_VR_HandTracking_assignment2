@@ -1,144 +1,111 @@
+"""
+Created on 15/03/2025
+
+@author: Aryan
+
+Filename: faceHandTrack.py
+
+Relative Path: faceHandTrack.py
+"""
+
 import cv2
-import mediapipe as mp
 import time
-
-# Initialize MediaPipe modules for Face Mesh and Hand Tracking
-mp_drawing = mp.solutions.drawing_utils
-mp_face_mesh = mp.solutions.face_mesh
-mp_hands = mp.solutions.hands
-
-# Face Mesh Configuration
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=5,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
-face_drawing_spec = mp_drawing.DrawingSpec(
-    color=(255, 255, 255), thickness=1, circle_radius=1)
-
-# Hand Tracking Configuration
-hands = mp_hands.Hands(
-    max_num_hands=2,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
+import prediction
 
 
-# input_video_path = "input.mp4"  # or None
-input_video_path = None
-cap = cv2.VideoCapture(input_video_path if input_video_path else 0)
-
-# Now, save the output as .mov instead of .avi
-# output_video_path = "output.mov"
-output_video_path = "output.mp4"
-# 'mp4v' works for .mov on many platforms
-# fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-# Better for MP4, requires H.264 codec support
-fourcc = cv2.VideoWriter_fourcc(*'H264')
-
-out = None
-frame_width, frame_height = int(cap.get(3)), int(cap.get(4))
-fps = cap.get(cv2.CAP_PROP_FPS) or 30
-
-if output_video_path:
-    out = cv2.VideoWriter(output_video_path, fourcc, fps,
-                          (frame_width, frame_height))
-##########################################################################
-
-# FPS Calculation
-previous_time = 0
-
-
-def detect_finger_gesture(hand_landmarks):
+def run_opencv_hand_tracking():
     """
-    Detects if a hand is showing an 'Open Palm' (all fingers extended) or a 'Fist' (all fingers folded).
-    Uses the y-coordinates of finger tips relative to their respective lower joints.
+    Displays real-time hand tracking using OpenCV (Tasks 1 & 2).
+    Shows:
+      - 2D landmarks from MediaPipe
+      - 3D landmarks reprojected via solvePnP
+      - Basic pinch detection feedback
     """
-    thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP].y
-    index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].y
-    middle_tip = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP].y
-    ring_tip = hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_TIP].y
-    pinky_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP].y
+    capture = cv2.VideoCapture(0)
+    if not capture.isOpened():
+        print("[ERROR] Could not open camera.")
+        return
 
-    index_base = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP].y
-    middle_base = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_MCP].y
-    ring_base = hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_MCP].y
-    pinky_base = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_MCP].y
+    previousTime = time.time()
 
-    # Check if all fingers are extended (Open Palm)
-    if (index_tip < index_base and
-        middle_tip < middle_base and
-        ring_tip < ring_base and
-            pinky_tip < pinky_base):
-        return "Open Palm"
+    while True:
+        ret, frame = capture.read()
+        if not ret:
+            break
 
-    # Check if all fingers are curled (Fist)
-    if (index_tip > index_base and
-        middle_tip > middle_base and
-        ring_tip > ring_base and
-            pinky_tip > pinky_base):
-        return "Fist"
+        # Flip horizontally (mirror effect)
+        frame = cv2.flip(frame, 1)
+        # Convert to RGB for MediaPipe
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    return "Unknown"
+        # 1) Get hand landmarks using prediction module
+        detection_result = prediction.predict(frame_rgb)
 
+        # Draw the 2D landmarks on the frame
+        frame_bgr = prediction.draw_landmarks_on_image(
+            cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR),
+            detection_result
+        )
 
-while cap.isOpened():
-    success, image = cap.read()
-    if not success:
-        break
+        # 2) Use solvePnP to align 3D landmarks to the image
+        frame_height, frame_width = frame_bgr.shape[:2]
+        camera_matrix = prediction.get_camera_matrix(frame_width, frame_height)
+        world_landmarks_list = prediction.solvepnp(
+            model_landmarks_list=detection_result.model_landmarks_list,
+            image_landmarks_list=detection_result.hand_landmarks,
+            camera_matrix=camera_matrix,
+            frame_width=frame_width,
+            frame_height=frame_height
+        )
 
-    # Flip image for a front-facing camera effect
-    image = cv2.flip(image, 1)
-    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # 3) Reproject the 3D landmarks back to 2D to check alignment
+        repro_error, repro_points_list = prediction.reproject(
+            world_landmarks_list,
+            detection_result.hand_landmarks,
+            camera_matrix,
+            frame_width,
+            frame_height
+        )
 
-    # Process Face and Hand Detection
-    face_results = face_mesh.process(rgb_image)
-    hand_results = hands.process(rgb_image)
+        # Draw the reprojected landmarks in red
+        for pts2d in repro_points_list:
+            for (px, py) in pts2d:
+                cv2.circle(frame_bgr, (int(px), int(py)), 5, (0, 0, 255), -1)
 
-    # Draw Face Mesh Landmarks
-    if face_results.multi_face_landmarks:
-        for face_landmarks in face_results.multi_face_landmarks:
-            mp_drawing.draw_landmarks(
-                image=image,
-                landmark_list=face_landmarks,
-                connections=mp_face_mesh.FACEMESH_TESSELATION,
-                landmark_drawing_spec=face_drawing_spec,
-                connection_drawing_spec=face_drawing_spec
+        # (Optional) Basic pinch detection on the first hand if available
+        if detection_result.hand_landmarks:
+            is_pinching = prediction.check_pinch_gesture(
+                detection_result.hand_landmarks[0])
+            gesture_text = "Pinch" if is_pinching else "No Pinch"
+            cv2.putText(
+                frame_bgr,
+                gesture_text,
+                (50, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2
             )
 
-    # Draw Hand Landmarks and Detect Finger Gesture
-    if hand_results.multi_hand_landmarks:
-        for hand_landmarks in hand_results.multi_hand_landmarks:
-            mp_drawing.draw_landmarks(
-                image=image,
-                landmark_list=hand_landmarks,
-                connections=mp_hands.HAND_CONNECTIONS
-            )
-            gesture = detect_finger_gesture(hand_landmarks)
-            cv2.putText(image, gesture, (50, 100),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+        # Calculate and display FPS
+        currentTime = time.time()
+        fps = 1 / (currentTime - previousTime)
+        previousTime = currentTime
+        cv2.putText(
+            frame_bgr,
+            f"FPS: {int(fps)}",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 255, 0),
+            2
+        )
 
-    # Calculate and Display FPS
-    current_time = time.time()
-    fps = 1 / (current_time - previous_time)
-    previous_time = current_time
-    cv2.putText(image, f"FPS: {int(fps)}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.imshow("OpenCV Hand Tracking (PnP)", frame_bgr)
 
-    # Show Image
-    cv2.imshow('Face & Hand Recognition', image)
+        # Exit on 'ESC'
+        if cv2.waitKey(5) & 0xFF == 27:
+            break
 
-    # Save frame to output video
-    if out:
-        out.write(image)
-
-    # Exit on 'ESC' key
-    if cv2.waitKey(5) & 0xFF == 27:
-        break
-
-# Cleanup
-cap.release()
-if out:
-    out.release()
-cv2.destroyAllWindows()
+    capture.release()
+    cv2.destroyAllWindows()
