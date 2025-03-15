@@ -22,29 +22,79 @@ import prediction
 
 class CameraAR(mglw.WindowConfig):
     """
-    ModernGL application for rendering the camera feed plus a textured 3D crate.
+    Simplified version of CameraAR that focuses just on rendering the camera feed.
     """
     gl_version = (3, 3)
-    title = "CameraAR"
-    resource_dir = "data"  # Where crate.obj / crate.png are located
+    title = "CameraAR Debug"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Set unpack alignment to 1
         self.ctx.unpack_alignment = 1
-        self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
 
-        # ----------------------------------------------------------------
-        # 1) Fullscreen quad for displaying camera feed
-        # ----------------------------------------------------------------
-        self.prog_rect = self.ctx.program(
+        print("[DEBUG] Creating simpler renderer")
+
+        # Very simple fragment shader that renders a solid color first to verify rendering works
+        self.prog_simple = self.ctx.program(
+            vertex_shader="""
+                #version 330
+                in vec2 in_position;
+                void main() {
+                    gl_Position = vec4(in_position, 0.0, 1.0);
+                }
+            """,
+            fragment_shader="""
+                #version 330
+                out vec4 f_color;
+                void main() {
+                    f_color = vec4(0.0, 0.5, 1.0, 1.0); // Solid blue color
+                }
+            """
+        )
+
+        # Create a quad that fills the screen
+        quad_data = np.array([
+            # x,    y
+            -1.0,  1.0,
+            -1.0, -1.0,
+            1.0,  1.0,
+            1.0, -1.0,
+        ], dtype="f4")
+
+        self.vbo_simple = self.ctx.buffer(quad_data.tobytes())
+        self.vao_simple = self.ctx.vertex_array(
+            self.prog_simple,
+            [(self.vbo_simple, "2f", "in_position")],
+        )
+
+        # Start camera - explicit error handling
+        print("[DEBUG] Starting camera")
+        self.capture = cv2.VideoCapture(0)
+        if not self.capture.isOpened():
+            print("[ERROR] Could not open camera.")
+            exit(1)
+
+        ret, frame = self.capture.read()
+        if not ret:
+            print("[ERROR] Could not read from camera.")
+            exit(1)
+
+        self.cam_h, self.cam_w = frame.shape[:2]
+        print(f"[DEBUG] Camera initialized: {self.cam_w}x{self.cam_h}")
+
+        # Now create textures and actual rendering program
+        self.setup_texture_renderer()
+
+    def setup_texture_renderer(self):
+        """Set up the actual camera texture rendering after basics work"""
+        print("[DEBUG] Setting up texture renderer")
+
+        # Create basic camera texture program
+        self.prog_camera = self.ctx.program(
             vertex_shader="""
                 #version 330
                 in vec2 in_position;
                 in vec2 in_texcoord;
-
                 out vec2 v_texcoord;
-
                 void main() {
                     gl_Position = vec4(in_position, 0.0, 1.0);
                     v_texcoord = in_texcoord;
@@ -52,208 +102,109 @@ class CameraAR(mglw.WindowConfig):
             """,
             fragment_shader="""
                 #version 330
-                uniform sampler2D cam_texture;
-
+                uniform sampler2D tex_image;
                 in vec2 v_texcoord;
                 out vec4 f_color;
-
                 void main() {
-                    // Flip the texture vertically here:
-                    vec2 flipped = vec2(v_texcoord.x, 1.0 - v_texcoord.y);
-                    f_color = texture(cam_texture, flipped);
+                    // Flip Y coordinate
+                    vec2 tc = vec2(v_texcoord.x, 1.0 - v_texcoord.y);
+                    // Debug visualization - show texcoords as colors
+                    vec4 tex_color = texture(tex_image, tc);
+                    f_color = mix(tex_color, vec4(tc.rg, 0.0, 1.0), 0.2);
                 }
             """
         )
 
-        # Make sure sampler is bound to texture unit 0
-        self.u_cam_texture = self.prog_rect["cam_texture"]
-        self.u_cam_texture.value = 0  # "cam_texture" is texture unit 0
+        # Set texture uniform
+        self.prog_camera["tex_image"].value = 0
 
-        # A simple quad that fills the screen
-        quad_data = np.array([
+        # Create quad with texture coordinates
+        vertices = np.array([
             # x,    y,    u,    v
-            -1.0,  1.0,  0.0,  0.0,
-            -1.0, -1.0,  0.0,  1.0,
-            1.0,  1.0,  1.0,  0.0,
-            1.0, -1.0,  1.0,  1.0,
+            -1.0,  1.0,  0.0,  0.0,  # top-left
+            -1.0, -1.0,  0.0,  1.0,  # bottom-left
+            1.0,  1.0,  1.0,  0.0,  # top-right
+            1.0, -1.0,  1.0,  1.0,  # bottom-right
         ], dtype="f4")
 
-        self.vbo_rect = self.ctx.buffer(quad_data.tobytes())
-        self.vao_rect = self.ctx.vertex_array(
-            self.prog_rect,
-            [(self.vbo_rect, "2f 2f", "in_position", "in_texcoord")],
+        self.vbo_camera = self.ctx.buffer(vertices.tobytes())
+        self.vao_camera = self.ctx.vertex_array(
+            self.prog_camera,
+            [(self.vbo_camera, "2f 2f", "in_position", "in_texcoord")],
         )
 
-        # ----------------------------------------------------------------
-        # 2) Program for rendering the textured crate
-        # ----------------------------------------------------------------
-        self.prog_cube = self.ctx.program(
-            vertex_shader="""
-                #version 330
-                uniform mat4 Mvp;
+        # Create the texture with format matching our data
+        print(f"[DEBUG] Creating texture {self.cam_w}x{self.cam_h}")
+        self.texture = self.ctx.texture(
+            (self.cam_w, self.cam_h), 4, dtype="u1")  # u1 = unsigned byte format
+        self.texture.filter = (moderngl.NEAREST, moderngl.NEAREST)
 
-                in vec3 in_position;
-                in vec3 in_normal;
-                in vec2 in_texcoord;
+        # For debugging, create a test pattern texture using 8-bit values
+        pattern = np.zeros((self.cam_h, self.cam_w, 4), dtype=np.uint8)
+        # Create a checkboard pattern
+        for y in range(self.cam_h):
+            for x in range(self.cam_w):
+                cell_size = 64
+                checker = ((x // cell_size) % 2) == ((y // cell_size) % 2)
+                pattern[y, x] = [255, 255, 255, 255] if checker else [
+                    128, 128, 128, 255]
 
-                out vec3 v_normal;
-                out vec2 v_texcoord;
+        # Update the texture with test pattern
+        print("[DEBUG] Updating texture with test pattern")
+        self.texture.write(pattern.tobytes())
 
-                void main() {
-                    gl_Position = Mvp * vec4(in_position, 1.0);
-                    v_normal = in_normal;
-                    v_texcoord = in_texcoord;
-                }
-            """,
-            fragment_shader="""
-                #version 330
-
-                uniform sampler2D Texture;
-                in vec3 v_normal;
-                in vec2 v_texcoord;
-                out vec4 f_color;
-
-                void main() {
-                    vec3 base = texture(Texture, v_texcoord).rgb;
-                    float light = max(dot(normalize(v_normal), vec3(0.0, 0.0, 1.0)), 0.0);
-                    f_color = vec4(base * light, 1.0);
-                }
-            """
-        )
-        self.u_mvp = self.prog_cube["Mvp"]
-
-        # ----------------------------------------------------------------
-        # 3) Load crate model from crate.obj
-        # ----------------------------------------------------------------
-        crate_path = os.path.join(self.resource_dir, "crate.obj")
-        crate_scene = pywavefront.Wavefront(crate_path, collect_faces=True)
-
-        # crate.obj is assumed to have 3 pos + 3 normal + 2 texcoord = 8 floats per vertex
-        vertices = np.array(crate_scene.vertices, dtype="f4")
-        indices = np.array(sum(crate_scene.mesh_list[0].faces, []), dtype="i4")
-
-        self.vbo_cube = self.ctx.buffer(vertices.tobytes())
-        self.ibo_cube = self.ctx.buffer(indices.tobytes())
-
-        self.vao_cube = self.ctx.vertex_array(
-            self.prog_cube,
-            [
-                (self.vbo_cube, "3f 3f 2f", "in_position", "in_normal", "in_texcoord")
-            ],
-            self.ibo_cube
-        )
-
-        # ----------------------------------------------------------------
-        # 4) Load crate texture from crate.png (RGBA)
-        # ----------------------------------------------------------------
-        crate_tex_path = os.path.join(self.resource_dir, "crate.png")
-        img = Image.open(crate_tex_path).convert("RGBA")
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
-
-        self.crate_tex = self.ctx.texture(
-            (img.width, img.height), 4, data=img.tobytes()
-        )
-        self.crate_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
-
-        # ----------------------------------------------------------------
-        # 5) Start OpenCV camera
-        # ----------------------------------------------------------------
-        self.capture = cv2.VideoCapture(0)
-        ret, frame = self.capture.read()
-        if not ret:
-            print("[ERROR] Could not read from camera.")
-            exit(1)
-
-        self.cam_h, self.cam_w = frame.shape[:2]
-
-        # ***IMPORTANT***: Use 4 components (RGBA), because Metal drivers
-        # are often finicky about 3-channel textures.
-        # We'll fill the texture in on_render().
-        self.cam_texture = self.ctx.texture(
-            (self.cam_w, self.cam_h),
-            4,  # RGBA
-            dtype="u1"
-        )
-        self.cam_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
-
-        # AR logic placeholders
-        self.cube_pos = np.array([0, 0, -30], dtype="f4")
-        self.is_grabbed = False
+        self.render_mode = 0  # 0=blue quad, 1=test pattern, 2=camera
+        print("[DEBUG] Setup complete")
 
     def on_render(self, time, frame_time):
-        # Read the current camera frame
-        ret, frame = self.capture.read()
-        if not ret:
+        self.ctx.clear(0.0, 0.0, 0.0, 1.0)  # Black background
+
+        # Start with simple blue quad rendering to verify setup
+        if self.render_mode == 0:
+            self.vao_simple.render(moderngl.TRIANGLE_STRIP)
+            # Switch to test pattern on next frame
+            self.render_mode = 1
             return
 
-        # Flip horizontally (mirror)
-        frame = cv2.flip(frame, 1)
+        # Test pattern rendering to verify texture setup
+        if self.render_mode == 1:
+            self.texture.use(location=0)
+            self.vao_camera.render(moderngl.TRIANGLE_STRIP)
+            # Switch to camera on next frame
+            self.render_mode = 2
+            return
 
-        # Convert BGR -> RGBA
-        frame_rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
-        # We do not flip vertically here because we do that in the shader
-        # If you prefer flipping in Python, uncomment below and remove the flip in the shader:
-        # frame_rgba = cv2.flip(frame_rgba, 0)
+        # Camera rendering - now we try to use the actual camera
+        try:
+            ret, frame = self.capture.read()
+            if not ret:
+                print("[ERROR] Failed to read camera frame")
+                return
 
-        # Update the camera texture with the new frame
-        self.cam_texture.write(frame_rgba.tobytes())
+            # Flip horizontally for mirror effect
+            frame = cv2.flip(frame, 1)
 
-        # Clear screen
-        self.ctx.clear(0.0, 0.0, 0.0, 1.0)
+            # Convert to RGBA explicitly - keep as uint8
+            frame_rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
 
-        # Draw the camera feed (full-screen quad)
-        self.cam_texture.use(location=0)  # Bind to texture unit 0
-        # self.vao_rect.render(moderngl.TRIANGLE_STRIP)
-        self.vao_rect.render(mode=moderngl.TRIANGLE_STRIP)
+            # Important: Make sure memory is contiguous
+            frame_rgba = np.ascontiguousarray(frame_rgba)
 
-        # -----------------------------------------------------------
-        # Optional: Hand detection & AR logic from your `prediction`
-        # -----------------------------------------------------------
-        detection_result = prediction.predict(frame_rgba)
-        camera_matrix = prediction.get_camera_matrix(self.cam_w, self.cam_h)
-        world_landmarks_list = prediction.solvepnp(
-            detection_result.model_landmarks_list,
-            detection_result.hand_landmarks,
-            camera_matrix,
-            self.cam_w,
-            self.cam_h
-        )
+            # Update texture with the new frame - directly use uint8 data
+            self.texture.write(frame_rgba.tobytes())
 
-        # Very simple pinch detection
-        is_pinching = False
-        for i, hand2d in enumerate(detection_result.hand_landmarks):
-            if prediction.check_pinch_gesture(hand2d):
-                is_pinching = True
-                if i < len(world_landmarks_list):
-                    finger_3d = world_landmarks_list[i][8]
-                    dist = np.linalg.norm(finger_3d - self.cube_pos)
-                    if dist < 10.0:
-                        self.is_grabbed = True
-                        break
-        if not is_pinching:
-            self.is_grabbed = False
+            # Render the camera feed
+            self.texture.use(location=0)
+            self.vao_camera.render(moderngl.TRIANGLE_STRIP)
 
-        # -----------------------------------------------------------
-        # Render the crate with a simple perspective
-        # -----------------------------------------------------------
-        fov_y = prediction.get_fov_y(camera_matrix, self.cam_h)
-        aspect = self.cam_w / self.cam_h
-
-        proj = Matrix44.perspective_projection(fov_y, aspect, 1.0, 1000.0)
-
-        # Rotate the crate around Y axis and place it at self.cube_pos
-        model = Matrix44.from_translation(self.cube_pos)
-        model *= Matrix44.from_y_rotation(time)
-
-        mvp = proj * model
-        self.u_mvp.write(mvp.astype("f4"))
-
-        # Bind and render the crate
-        self.crate_tex.use(location=0)
-        self.vao_cube.render()
+        except Exception as e:
+            print(f"[ERROR] Camera rendering failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     def close(self):
-        self.capture.release()
+        if hasattr(self, 'capture'):
+            self.capture.release()
         super().close()
 
 
