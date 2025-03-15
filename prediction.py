@@ -8,7 +8,6 @@ Filename: prediction.py
 Relative Path: prediction.py
 """
 
-
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -63,7 +62,7 @@ def predict(frame_rgb):
     results = detector.detect(mp_image)
     detection_result = DetectionResult()
 
-    # Updated to use 'hand_landmarks' and 'hand_world_landmarks'
+    # Use 'hand_landmarks' and 'hand_world_landmarks' per the new API
     if results.hand_landmarks:
         for landm_2d in results.hand_landmarks:
             detection_result.hand_landmarks.append(landm_2d)
@@ -83,9 +82,7 @@ def draw_landmarks_on_image(image_bgr, detection_result):
     for hand_landmarks in detection_result.hand_landmarks:
         hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
         hand_landmarks_proto.landmark.extend([
-            landmark_pb2.NormalizedLandmark(
-                x=l.x, y=l.y, z=l.z
-            ) for l in hand_landmarks
+            landmark_pb2.NormalizedLandmark(x=l.x, y=l.y, z=l.z) for l in hand_landmarks
         ])
         mp_drawing.draw_landmarks(
             image_bgr,
@@ -104,9 +101,9 @@ def get_camera_matrix(frame_width, frame_height, scale=1.0):
     focal_length = frame_width * scale
     center = (frame_width / 2.0, frame_height / 2.0)
     camera_matrix = np.array(
-        [[focal_length,       0, center[0]],
-         [0,           focal_length, center[1]],
-         [0,                   0,      1]],
+        [[focal_length, 0, center[0]],
+         [0, focal_length, center[1]],
+         [0, 0, 1]],
         dtype=np.float64
     )
     return camera_matrix
@@ -148,8 +145,7 @@ def solvepnp(model_landmarks_list, image_landmarks_list, camera_matrix, frame_wi
 
         dist_coeffs = None
         success, rvec, tvec = cv2.solvePnP(
-            model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
-        )
+            model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
         if success:
             R, _ = cv2.Rodrigues(rvec)
             new_world = []
@@ -185,8 +181,7 @@ def reproject(world_landmarks_list, image_landmarks_list, camera_matrix, frame_w
             [[lm2d.x * frame_width, lm2d.y * frame_height] for lm2d in image_lms]).reshape((-1, 1, 2))
 
         success, rvec, tvec = cv2.solvePnP(
-            world_pts, image_points_2f, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
-        )
+            world_pts, image_points_2f, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
         if not success:
             reprojection_points_list.append([])
             continue

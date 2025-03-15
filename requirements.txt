@@ -5,3 +5,4 @@ moderngl-window
 numpy
 pyrr
 pywavefront
+Pillow
