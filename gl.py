@@ -88,7 +88,7 @@ class CameraAR(mglw.WindowConfig):
         """Set up the actual camera texture rendering after basics work"""
         print("[DEBUG] Setting up texture renderer")
 
-        # Create basic camera texture program
+        # Create basic camera texture program with fragment shader
         self.prog_camera = self.ctx.program(
             vertex_shader="""
                 #version 330
@@ -106,11 +106,7 @@ class CameraAR(mglw.WindowConfig):
                 in vec2 v_texcoord;
                 out vec4 f_color;
                 void main() {
-                    // Flip Y coordinate
-                    vec2 tc = vec2(v_texcoord.x, 1.0 - v_texcoord.y);
-                    // Debug visualization - show texcoords as colors
-                    vec4 tex_color = texture(tex_image, tc);
-                    f_color = mix(tex_color, vec4(tc.rg, 0.0, 1.0), 0.2);
+                    f_color = texture(tex_image, v_texcoord);
                 }
             """
         )
@@ -118,13 +114,13 @@ class CameraAR(mglw.WindowConfig):
         # Set texture uniform
         self.prog_camera["tex_image"].value = 0
 
-        # Create quad with texture coordinates
+        # Create quad with INVERTED texture coordinates to correct the orientation
         vertices = np.array([
             # x,    y,    u,    v
-            -1.0,  1.0,  0.0,  0.0,  # top-left
-            -1.0, -1.0,  0.0,  1.0,  # bottom-left
-            1.0,  1.0,  1.0,  0.0,  # top-right
-            1.0, -1.0,  1.0,  1.0,  # bottom-right
+            -1.0,  1.0,  0.0,  0.0,  # top-left - CORRECTED V
+            -1.0, -1.0,  0.0,  1.0,  # bottom-left - CORRECTED V
+            1.0,  1.0,  1.0,  0.0,  # top-right - CORRECTED V
+            1.0, -1.0,  1.0,  1.0,  # bottom-right - CORRECTED V
         ], dtype="f4")
 
         self.vbo_camera = self.ctx.buffer(vertices.tobytes())
@@ -181,7 +177,7 @@ class CameraAR(mglw.WindowConfig):
                 print("[ERROR] Failed to read camera frame")
                 return
 
-            # Flip horizontally for mirror effect
+            # Only flip horizontally for mirror effect
             frame = cv2.flip(frame, 1)
 
             # Convert to RGBA explicitly - keep as uint8
