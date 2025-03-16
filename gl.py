@@ -184,6 +184,41 @@ class CameraAR(mglw.WindowConfig):
         self.vao_bg = self.ctx.simple_vertex_array(
             self.prog_bg, self.vbo_bg, 'in_vert', 'in_tex')
 
+    def on_key_press(self, key, action):
+        # Add keyboard controls to adjust color balance and saturation
+        if action == self.keys.ACTION_PRESS:
+            if key == self.keys.R:
+                # Adjust red balance
+                r, g, b = self.color_balance.value
+                self.color_balance.value = (max(0.1, r - 0.05), g, b)
+                print(f"Color balance: {self.color_balance.value}")
+            elif key == self.keys.T:
+                r, g, b = self.color_balance.value
+                self.color_balance.value = (min(2.0, r + 0.05), g, b)
+                print(f"Color balance: {self.color_balance.value}")
+            elif key == self.keys.G:
+                # Adjust green balance
+                r, g, b = self.color_balance.value
+                self.color_balance.value = (r, max(0.1, g - 0.05), b)
+                print(f"Color balance: {self.color_balance.value}")
+            elif key == self.keys.H:
+                r, g, b = self.color_balance.value
+                self.color_balance.value = (r, min(2.0, g + 0.05), b)
+                print(f"Color balance: {self.color_balance.value}")
+            elif key == self.keys.B:
+                # Adjust blue balance
+                r, g, b = self.color_balance.value
+                self.color_balance.value = (r, g, max(0.1, b - 0.05))
+                print(f"Color balance: {self.color_balance.value}")
+            elif key == self.keys.N:
+                r, g, b = self.color_balance.value
+                self.color_balance.value = (r, g, min(2.0, b + 0.05))
+                print(f"Color balance: {self.color_balance.value}")
+            elif key == self.keys.S:
+                # Decrease saturation
+                self.saturation.value = max(0.0, self.saturation.value - 0.05)
+
+
     def on_render(self, time: float, frame_time: float):
         self.ctx.clear(0.0, 0.0, 0.0)
 
@@ -198,9 +233,35 @@ class CameraAR(mglw.WindowConfig):
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Skip histogram equalization which can cause color distortion
+        # Hand detection
+        detection_result = predict(frame_rgb)
 
-        # Update video texture
+        # Draw hand landmarks and connections on the frame
+        if detection_result is not None and detection_result.hand_landmarks:
+            from mediapipe import solutions
+            from mediapipe.framework.formats import landmark_pb2
+
+            # Draw landmarks and connections for each detected hand
+            for hand_landmarks in detection_result.hand_landmarks:
+                # Convert normalized landmarks to landmark proto for drawing
+                hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+                hand_landmarks_proto.landmark.extend([
+                    landmark_pb2.NormalizedLandmark(
+                        x=landmark.x, y=landmark.y, z=landmark.z)
+                    for landmark in hand_landmarks
+                ])
+
+                # Draw the connections between landmarks (colored lines)
+                solutions.drawing_utils.draw_landmarks(
+                    frame,
+                    hand_landmarks_proto,
+                    solutions.hands.HAND_CONNECTIONS,
+                    solutions.drawing_styles.get_default_hand_landmarks_style(),
+                    solutions.drawing_styles.get_default_hand_connections_style()
+                )
+
+        # Update video texture with the processed frame including drawn landmarks
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         self.video_texture.write(frame_rgb.tobytes())
         self.video_texture.use(location=0)
         self.prog_bg['Texture'].value = 0
@@ -209,8 +270,7 @@ class CameraAR(mglw.WindowConfig):
         # Enable depth test for 3D objects
         self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
 
-        # Hand detection
-        detection_result = predict(frame_rgb)
+        # Process hand landmarks for 3D positioning
         world_landmarks_list = []
         if detection_result is not None and detection_result.hand_landmarks:
             print(f"Detected {len(detection_result.hand_landmarks)} hands")
@@ -222,6 +282,7 @@ class CameraAR(mglw.WindowConfig):
                 model_landmarks_list, image_landmarks_list, cam_matrix,
                 self.window_size[0], self.window_size[1])
 
+        # Rest of your existing code for 3D rendering
         # Convert landmarks to OpenGL coordinates
         converted_landmarks = []
         for landmarks in world_landmarks_list:
@@ -282,37 +343,3 @@ class CameraAR(mglw.WindowConfig):
                 self.color.value = (0.0, 1.0, 0.0)  # Green markers
                 self.withTexture.value = False
                 self.vao_marker.render()
-
-    def on_key_press(self, key, action):
-        # Add keyboard controls to adjust color balance and saturation
-        if action == self.keys.ACTION_PRESS:
-            if key == self.keys.R:
-                # Adjust red balance
-                r, g, b = self.color_balance.value
-                self.color_balance.value = (max(0.1, r - 0.05), g, b)
-                print(f"Color balance: {self.color_balance.value}")
-            elif key == self.keys.T:
-                r, g, b = self.color_balance.value
-                self.color_balance.value = (min(2.0, r + 0.05), g, b)
-                print(f"Color balance: {self.color_balance.value}")
-            elif key == self.keys.G:
-                # Adjust green balance
-                r, g, b = self.color_balance.value
-                self.color_balance.value = (r, max(0.1, g - 0.05), b)
-                print(f"Color balance: {self.color_balance.value}")
-            elif key == self.keys.H:
-                r, g, b = self.color_balance.value
-                self.color_balance.value = (r, min(2.0, g + 0.05), b)
-                print(f"Color balance: {self.color_balance.value}")
-            elif key == self.keys.B:
-                # Adjust blue balance
-                r, g, b = self.color_balance.value
-                self.color_balance.value = (r, g, max(0.1, b - 0.05))
-                print(f"Color balance: {self.color_balance.value}")
-            elif key == self.keys.N:
-                r, g, b = self.color_balance.value
-                self.color_balance.value = (r, g, min(2.0, b + 0.05))
-                print(f"Color balance: {self.color_balance.value}")
-            elif key == self.keys.S:
-                # Decrease saturation
-                self.saturation.value = max(0.0, self.saturation.value - 0.05)

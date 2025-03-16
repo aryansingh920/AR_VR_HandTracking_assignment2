@@ -13,7 +13,6 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
-# from mediapipe.framework.formats import image_frame  # Import ImageFrame
 
 import numpy as np
 import cv2
@@ -30,6 +29,12 @@ def predict(frame):
     """
     Task 1: Implement hand landmark prediction.
     Convert the NumPy array to a MediaPipe Image and pass it to the detector.
+    
+    Args:
+        frame: A NumPy array containing the RGB image data
+        
+    Returns:
+        MediaPipe detection results with hand landmarks
     """
     # Convert the frame to a MediaPipe Image object
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
@@ -40,8 +45,15 @@ def predict(frame):
 def draw_landmarks_on_image(image, detection_result):
     """
     A helper function to draw the detected 2D landmarks on an image.
+    
+    Args:
+        image: A NumPy array containing the BGR image data
+        detection_result: MediaPipe detection results with hand landmarks
+        
+    Returns:
+        Image with landmarks drawn on it
     """
-    if not detection_result:
+    if not detection_result or not detection_result.hand_landmarks:
         return image
 
     hand_landmarks_list = detection_result.hand_landmarks
@@ -66,6 +78,14 @@ def draw_landmarks_on_image(image, detection_result):
 def get_camera_matrix(frame_width, frame_height, scale=1.0):
     """
     Compute the 3x3 camera intrinsic matrix.
+    
+    Args:
+        frame_width: Width of the image frame
+        frame_height: Height of the image frame
+        scale: Scale factor for focal length calculation (default: 1.0)
+        
+    Returns:
+        3x3 camera intrinsic matrix as a NumPy array
     """
     focal_length = frame_width * scale
     center = (frame_width / 2.0, frame_height / 2.0)
@@ -80,6 +100,13 @@ def get_camera_matrix(frame_width, frame_height, scale=1.0):
 def get_fov_y(camera_matrix, frame_height):
     """
     Compute the vertical field of view from the camera matrix.
+    
+    Args:
+        camera_matrix: 3x3 camera intrinsic matrix
+        frame_height: Height of the image frame
+        
+    Returns:
+        Vertical field of view in degrees
     """
     focal_length_y = camera_matrix[1][1]
     fov_y = np.rad2deg(2 * np.arctan2(frame_height, 2 * focal_length_y))
@@ -89,6 +116,13 @@ def get_fov_y(camera_matrix, frame_height):
 def get_matrix44(rvec, tvec):
     """
     Convert rotation and translation vectors into a 4x4 transformation matrix.
+    
+    Args:
+        rvec: Rotation vector
+        tvec: Translation vector
+        
+    Returns:
+        4x4 transformation matrix
     """
     rvec = np.asarray(rvec)
     tvec = np.asarray(tvec)
@@ -102,6 +136,16 @@ def get_matrix44(rvec, tvec):
 def solvepnp(model_landmarks_list, image_landmarks_list, camera_matrix, frame_width, frame_height):
     """
     Solve for global rotation and translation to map hand model points to camera space.
+    
+    Args:
+        model_landmarks_list: List of 3D model landmarks
+        image_landmarks_list: List of 2D image landmarks
+        camera_matrix: 3x3 camera intrinsic matrix
+        frame_width: Width of the image frame
+        frame_height: Height of the image frame
+        
+    Returns:
+        List of 3D world landmarks for each detected hand
     """
     if not model_landmarks_list:
         return []
@@ -132,6 +176,16 @@ def solvepnp(model_landmarks_list, image_landmarks_list, camera_matrix, frame_wi
 def reproject(world_landmarks_list, image_landmarks_list, camera_matrix, frame_width, frame_height):
     """
     Reproject 3D world landmarks to the image plane for visualization.
+    
+    Args:
+        world_landmarks_list: List of 3D world landmarks
+        image_landmarks_list: List of 2D image landmarks
+        camera_matrix: 3x3 camera intrinsic matrix
+        frame_width: Width of the image frame
+        frame_height: Height of the image frame
+        
+    Returns:
+        Tuple of (reprojection_error, reprojection_points_list)
     """
     reprojection_points_list = []
     reprojection_error = 0.0
@@ -147,31 +201,141 @@ def reproject(world_landmarks_list, image_landmarks_list, camera_matrix, frame_w
     return reprojection_error, reprojection_points_list
 
 
+def check_pinch_gesture(hand_landmarks):
+    """
+    Detects if the user is performing a pinch gesture.
+    
+    A pinch occurs when the thumb tip is close to the index finger tip.
+    
+    Args:
+        hand_landmarks: List of hand landmarks from MediaPipe
+        
+    Returns:
+        Boolean indicating if a pinch is detected
+    """
+    if not hand_landmarks or len(hand_landmarks) < 9:  # Need at least thumb tip (4) and index tip (8)
+        return False
+
+    thumb_tip = np.array(
+        [hand_landmarks[4].x, hand_landmarks[4].y])  # Thumb tip
+    # Index finger tip
+    index_tip = np.array([hand_landmarks[8].x, hand_landmarks[8].y])
+
+    distance = np.linalg.norm(thumb_tip - index_tip)
+
+    # Threshold for pinch detection (adjust as necessary)
+    return distance < 0.05
+
+
+def get_distance_between_points(point1, point2):
+    """
+    Calculate Euclidean distance between two points.
+    
+    Args:
+        point1: First point as NumPy array or list
+        point2: Second point as NumPy array or list
+        
+    Returns:
+        Euclidean distance between points
+    """
+    return np.linalg.norm(np.array(point1) - np.array(point2))
+
+
 if __name__ == '__main__':
     # Example main function to display video and hand landmarks using OpenCV.
     capture = cv2.VideoCapture(0)
+    if not capture.isOpened():
+        print("[ERROR] Could not open camera.")
+        exit()
+
     previousTime = 0
     currentTime = 0
 
     while capture.isOpened():
         ret, frame = capture.read()
+        if not ret:
+            break
+
+        # Flip horizontally (mirror effect)
+        frame = cv2.flip(frame, 1)
+
+        # Resize and convert to RGB for MediaPipe
         aspect_ratio = frame.shape[1] / frame.shape[0]
         frame = cv2.resize(frame, (int(720 * aspect_ratio), 720))
-        frame = cv2.flip(frame, 1)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Get hand landmarks
         detection_result = predict(frame_rgb)
-        frame = draw_landmarks_on_image(frame, detection_result)
 
-        # (Optional) SolvePnP and reproject landmarks here for debugging.
+        # Draw the 2D landmarks on the frame
+        frame_bgr = draw_landmarks_on_image(
+            cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR),
+            detection_result
+        )
 
+        # Calculate camera matrix for PnP
+        frame_height, frame_width = frame_bgr.shape[:2]
+        camera_matrix = get_camera_matrix(frame_width, frame_height)
+
+        # Apply solvePnP if we have hand landmarks
+        if hasattr(detection_result, 'hand_world_landmarks') and detection_result.hand_world_landmarks:
+            world_landmarks_list = solvepnp(
+                model_landmarks_list=detection_result.hand_world_landmarks,
+                image_landmarks_list=detection_result.hand_landmarks,
+                camera_matrix=camera_matrix,
+                frame_width=frame_width,
+                frame_height=frame_height
+            )
+
+            # Reproject 3D landmarks back to 2D and draw them in red
+            repro_error, repro_points_list = reproject(
+                world_landmarks_list,
+                detection_result.hand_landmarks,
+                camera_matrix,
+                frame_width,
+                frame_height
+            )
+
+            # Draw the reprojected landmarks in red
+            for pts2d in repro_points_list:
+                for (px, py) in pts2d:
+                    cv2.circle(frame_bgr, (int(px), int(py)),
+                               5, (0, 0, 255), -1)
+
+        # Add pinch detection for the first hand if available
+        if hasattr(detection_result, 'hand_landmarks') and detection_result.hand_landmarks:
+            is_pinching = check_pinch_gesture(
+                detection_result.hand_landmarks[0]
+            )
+            gesture_text = "Pinch" if is_pinching else "No Pinch"
+            cv2.putText(
+                frame_bgr,
+                gesture_text,
+                (50, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2
+            )
+
+        # Calculate and display FPS
         currentTime = time.time()
         fps = 1 / (currentTime - previousTime)
         previousTime = currentTime
-        cv2.putText(frame, str(int(fps)) + " FPS", (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        cv2.imshow("", frame)
+        cv2.putText(
+            frame_bgr,
+            f"FPS: {int(fps)}",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 255, 0),
+            2
+        )
 
+        # Display the frame
+        cv2.imshow("OpenCV Hand Tracking (PnP)", frame_bgr)
+
+        # Exit on 'ESC'
         if cv2.waitKey(5) & 0xFF == 27:
             break
 
