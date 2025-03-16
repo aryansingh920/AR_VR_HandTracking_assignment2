@@ -241,103 +241,103 @@ def get_distance_between_points(point1, point2):
     return np.linalg.norm(np.array(point1) - np.array(point2))
 
 
-if __name__ == '__main__':
-    # Example main function to display video and hand landmarks using OpenCV.
-    capture = cv2.VideoCapture(0)
-    if not capture.isOpened():
-        print("[ERROR] Could not open camera.")
-        exit()
+# if __name__ == '__main__':
+#     # Example main function to display video and hand landmarks using OpenCV.
+#     capture = cv2.VideoCapture(0)
+#     if not capture.isOpened():
+#         print("[ERROR] Could not open camera.")
+#         exit()
 
-    previousTime = 0
-    currentTime = 0
+#     previousTime = 0
+#     currentTime = 0
 
-    while capture.isOpened():
-        ret, frame = capture.read()
-        if not ret:
-            break
+#     while capture.isOpened():
+#         ret, frame = capture.read()
+#         if not ret:
+#             break
 
-        # Flip horizontally (mirror effect)
-        frame = cv2.flip(frame, 1)
+#         # Flip horizontally (mirror effect)
+#         frame = cv2.flip(frame, 1)
 
-        # Resize and convert to RGB for MediaPipe
-        aspect_ratio = frame.shape[1] / frame.shape[0]
-        frame = cv2.resize(frame, (int(720 * aspect_ratio), 720))
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#         # Resize and convert to RGB for MediaPipe
+#         aspect_ratio = frame.shape[1] / frame.shape[0]
+#         frame = cv2.resize(frame, (int(720 * aspect_ratio), 720))
+#         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Get hand landmarks
-        detection_result = predict(frame_rgb)
+#         # Get hand landmarks
+#         detection_result = predict(frame_rgb)
 
-        # Draw the 2D landmarks on the frame
-        frame_bgr = draw_landmarks_on_image(
-            cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR),
-            detection_result
-        )
+#         # Draw the 2D landmarks on the frame
+#         frame_bgr = draw_landmarks_on_image(
+#             cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR),
+#             detection_result
+#         )
 
-        # Calculate camera matrix for PnP
-        frame_height, frame_width = frame_bgr.shape[:2]
-        camera_matrix = get_camera_matrix(frame_width, frame_height)
+#         # Calculate camera matrix for PnP
+#         frame_height, frame_width = frame_bgr.shape[:2]
+#         camera_matrix = get_camera_matrix(frame_width, frame_height)
 
-        # Apply solvePnP if we have hand landmarks
-        if hasattr(detection_result, 'hand_world_landmarks') and detection_result.hand_world_landmarks:
-            world_landmarks_list = solvepnp(
-                model_landmarks_list=detection_result.hand_world_landmarks,
-                image_landmarks_list=detection_result.hand_landmarks,
-                camera_matrix=camera_matrix,
-                frame_width=frame_width,
-                frame_height=frame_height
-            )
+#         # Apply solvePnP if we have hand landmarks
+#         if hasattr(detection_result, 'hand_world_landmarks') and detection_result.hand_world_landmarks:
+#             world_landmarks_list = solvepnp(
+#                 model_landmarks_list=detection_result.hand_world_landmarks,
+#                 image_landmarks_list=detection_result.hand_landmarks,
+#                 camera_matrix=camera_matrix,
+#                 frame_width=frame_width,
+#                 frame_height=frame_height
+#             )
 
-            # Reproject 3D landmarks back to 2D and draw them in red
-            repro_error, repro_points_list = reproject(
-                world_landmarks_list,
-                detection_result.hand_landmarks,
-                camera_matrix,
-                frame_width,
-                frame_height
-            )
+#             # Reproject 3D landmarks back to 2D and draw them in red
+#             repro_error, repro_points_list = reproject(
+#                 world_landmarks_list,
+#                 detection_result.hand_landmarks,
+#                 camera_matrix,
+#                 frame_width,
+#                 frame_height
+#             )
 
-            # Draw the reprojected landmarks in red
-            for pts2d in repro_points_list:
-                for (px, py) in pts2d:
-                    cv2.circle(frame_bgr, (int(px), int(py)),
-                               5, (0, 0, 255), -1)
+#             # Draw the reprojected landmarks in red
+#             for pts2d in repro_points_list:
+#                 for (px, py) in pts2d:
+#                     cv2.circle(frame_bgr, (int(px), int(py)),
+#                                5, (0, 0, 255), -1)
 
-        # Add pinch detection for the first hand if available
-        if hasattr(detection_result, 'hand_landmarks') and detection_result.hand_landmarks:
-            is_pinching = check_pinch_gesture(
-                detection_result.hand_landmarks[0]
-            )
-            gesture_text = "Pinch" if is_pinching else "No Pinch"
-            cv2.putText(
-                frame_bgr,
-                gesture_text,
-                (50, 50),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2
-            )
+#         # Add pinch detection for the first hand if available
+#         if hasattr(detection_result, 'hand_landmarks') and detection_result.hand_landmarks:
+#             is_pinching = check_pinch_gesture(
+#                 detection_result.hand_landmarks[0]
+#             )
+#             gesture_text = "Pinch" if is_pinching else "No Pinch"
+#             cv2.putText(
+#                 frame_bgr,
+#                 gesture_text,
+#                 (50, 50),
+#                 cv2.FONT_HERSHEY_SIMPLEX,
+#                 1,
+#                 (0, 255, 0),
+#                 2
+#             )
 
-        # Calculate and display FPS
-        currentTime = time.time()
-        fps = 1 / (currentTime - previousTime)
-        previousTime = currentTime
-        cv2.putText(
-            frame_bgr,
-            f"FPS: {int(fps)}",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 255, 0),
-            2
-        )
+#         # Calculate and display FPS
+#         currentTime = time.time()
+#         fps = 1 / (currentTime - previousTime)
+#         previousTime = currentTime
+#         cv2.putText(
+#             frame_bgr,
+#             f"FPS: {int(fps)}",
+#             (10, 30),
+#             cv2.FONT_HERSHEY_SIMPLEX,
+#             1,
+#             (0, 255, 0),
+#             2
+#         )
 
-        # Display the frame
-        cv2.imshow("OpenCV Hand Tracking (PnP)", frame_bgr)
+#         # Display the frame
+#         cv2.imshow("OpenCV Hand Tracking (PnP)", frame_bgr)
 
-        # Exit on 'ESC'
-        if cv2.waitKey(5) & 0xFF == 27:
-            break
+#         # Exit on 'ESC'
+#         if cv2.waitKey(5) & 0xFF == 27:
+#             break
 
-    capture.release()
-    cv2.destroyAllWindows()
+#     capture.release()
+#     cv2.destroyAllWindows()

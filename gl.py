@@ -222,6 +222,10 @@ class CameraAR(mglw.WindowConfig):
     def on_render(self, time: float, frame_time: float):
         self.ctx.clear(0.0, 0.0, 0.0)
 
+        # Calculate FPS
+        current_time = time
+        fps = 1.0 / frame_time  # Use frame_time directly for FPS calculation
+
         # Render background video first (without depth test)
         self.ctx.disable(moderngl.DEPTH_TEST)
 
@@ -235,6 +239,12 @@ class CameraAR(mglw.WindowConfig):
 
         # Hand detection
         detection_result = predict(frame_rgb)
+
+        # Initialize status variables
+        is_pinching = False
+        is_grabbed = False
+        thumb_index_distance = 0.0
+        index_cube_distance = 0.0
 
         # Draw hand landmarks and connections on the frame
         if detection_result is not None and detection_result.hand_landmarks:
@@ -260,16 +270,6 @@ class CameraAR(mglw.WindowConfig):
                     solutions.drawing_styles.get_default_hand_connections_style()
                 )
 
-        # Update video texture with the processed frame including drawn landmarks
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self.video_texture.write(frame_rgb.tobytes())
-        self.video_texture.use(location=0)
-        self.prog_bg['Texture'].value = 0
-        self.vao_bg.render(moderngl.TRIANGLE_STRIP)
-
-        # Enable depth test for 3D objects
-        self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
-
         # Process hand landmarks for 3D positioning
         world_landmarks_list = []
         if detection_result is not None and detection_result.hand_landmarks:
@@ -282,7 +282,6 @@ class CameraAR(mglw.WindowConfig):
                 model_landmarks_list, image_landmarks_list, cam_matrix,
                 self.window_size[0], self.window_size[1])
 
-        # Rest of your existing code for 3D rendering
         # Convert landmarks to OpenGL coordinates
         converted_landmarks = []
         for landmarks in world_landmarks_list:
@@ -300,7 +299,7 @@ class CameraAR(mglw.WindowConfig):
             fov_y, self.aspect_ratio, 0.1, 1000)
 
         # Gesture recognition and cube interaction
-        grabbed = False
+        is_grabbed = False
         pinch_threshold = 5.0  # Easier pinching
         hit_threshold = 7.0    # Easier object selection
 
@@ -308,18 +307,64 @@ class CameraAR(mglw.WindowConfig):
             thumb_tip = landmarks[4]
             index_tip = landmarks[8]
 
-            # Debug distances
-            dist_thumb_index = np.linalg.norm(thumb_tip - index_tip)
-            dist_index_cube = np.linalg.norm(index_tip - self.object_pos)
+            # Calculate distances
+            thumb_index_distance = np.linalg.norm(thumb_tip - index_tip)
+            index_cube_distance = np.linalg.norm(index_tip - self.object_pos)
             print(
-                f"Thumb-Index distance: {dist_thumb_index:.2f}, Index-Cube distance: {dist_index_cube:.2f}")
+                f"Thumb-Index distance: {thumb_index_distance:.2f}, Index-Cube distance: {index_cube_distance:.2f}")
 
-            if dist_thumb_index < pinch_threshold:
+            is_pinching = thumb_index_distance < pinch_threshold
+            if is_pinching:
                 print("Pinch detected!")
-                if dist_index_cube < hit_threshold:
+                if index_cube_distance < hit_threshold:
                     print("Object grabbed!")
-                    grabbed = True
+                    is_grabbed = True
                     self.object_pos = index_tip
+
+        # Draw status information on the frame
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 2
+
+        # Background for text - semi-transparent black rectangle
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (10, 10), (280, 140), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+
+        # FPS display (green)
+        cv2.putText(frame, f"FPS: {int(fps)}", (20, 40),
+                    font, font_scale, (0, 255, 0), thickness)
+
+        # Pinch status (yellow if pinching, white if not)
+        pinch_color = (0, 255, 255) if is_pinching else (255, 255, 255)
+        pinch_text = "Pinch: YES" if is_pinching else "Pinch: NO"
+        cv2.putText(frame, pinch_text, (20, 70), font,
+                    font_scale, pinch_color, thickness)
+
+        # Grab status (red if grabbed, white if not)
+        grab_color = (0, 0, 255) if is_grabbed else (255, 255, 255)
+        grab_text = "Grabbed: YES" if is_grabbed else "Grabbed: NO"
+        cv2.putText(frame, grab_text, (20, 100), font,
+                    font_scale, grab_color, thickness)
+
+        # Distance information
+        cv2.putText(frame, f"Thumb-Index: {thumb_index_distance:.1f}", (20, 130), font,
+                    font_scale, (255, 255, 255), thickness)
+
+        # More distance info if available
+        if index_cube_distance > 0:
+            cv2.putText(frame, f"Index-Cube: {index_cube_distance:.1f}", (20, 160), font,
+                        font_scale, (255, 255, 255), thickness)
+
+        # Update video texture with the processed frame including text overlays
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self.video_texture.write(frame_rgb.tobytes())
+        self.video_texture.use(location=0)
+        self.prog_bg['Texture'].value = 0
+        self.vao_bg.render(moderngl.TRIANGLE_STRIP)
+
+        # Enable depth test for 3D objects
+        self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
 
         # Render cube
         translate = Matrix44.from_translation(self.object_pos)
@@ -327,7 +372,7 @@ class CameraAR(mglw.WindowConfig):
         scale = Matrix44.from_scale((3, 3, 3))
         mvp = proj * translate * rotate * scale
         self.mvp.write(mvp.astype('f4'))
-        self.color.value = (1.0, 0.0, 0.0) if grabbed else (1.0, 1.0, 1.0)
+        self.color.value = (1.0, 0.0, 0.0) if is_grabbed else (1.0, 1.0, 1.0)
         self.light.value = (10, 10, 10)
         self.withTexture.value = True
         self.texture.use(location=0)
