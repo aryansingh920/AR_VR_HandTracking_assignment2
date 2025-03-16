@@ -271,24 +271,31 @@ class CameraAR(mglw.WindowConfig):
                 )
 
         # Process hand landmarks for 3D positioning
+        # Process hand landmarks for 3D positioning
         world_landmarks_list = []
-        if detection_result is not None and detection_result.hand_landmarks:
-            # print(f"Detected {len(detection_result.hand_landmarks)} hands")
+        if detection_result is not None and detection_result.hand_landmarks and detection_result.hand_world_landmarks:
+            # Only proceed if we have both 2D and 3D landmarks
             image_landmarks_list = detection_result.hand_landmarks
             model_landmarks_list = detection_result.hand_world_landmarks
-            cam_matrix = get_camera_matrix(
-                self.window_size[0], self.window_size[1], scale=0.8)
-            world_landmarks_list = solvepnp(
-                model_landmarks_list, image_landmarks_list, cam_matrix,
-                self.window_size[0], self.window_size[1])
 
-        # Convert landmarks to OpenGL coordinates
+            # Make sure the lists have the same length
+            if len(image_landmarks_list) == len(model_landmarks_list) and len(image_landmarks_list) > 0:
+                cam_matrix = get_camera_matrix(
+                    self.window_size[0], self.window_size[1], scale=0.8)
+                world_landmarks_list = solvepnp(
+                    model_landmarks_list, image_landmarks_list, cam_matrix,
+                    self.window_size[0], self.window_size[1])
+
+        # Only render landmarks if we have valid data
         converted_landmarks = []
-        for landmarks in world_landmarks_list:
-            landmarks_gl = landmarks.copy()
-            landmarks_gl[:, 1] = -landmarks_gl[:, 1]  # Flip Y
-            landmarks_gl[:, 2] = -landmarks_gl[:, 2]  # Flip Z
-            converted_landmarks.append(landmarks_gl)
+        if world_landmarks_list:
+            for landmarks in world_landmarks_list:
+                # Check if landmarks array is not empty and contains valid points
+                if landmarks is not None and len(landmarks) > 0:
+                    landmarks_gl = landmarks.copy()
+                    landmarks_gl[:, 1] = -landmarks_gl[:, 1]  # Flip Y
+                    landmarks_gl[:, 2] = -landmarks_gl[:, 2]  # Flip Z
+                    converted_landmarks.append(landmarks_gl)
 
         # Setup projection matrix
         fov_y = 45.0  # Default if no camera matrix
@@ -378,8 +385,37 @@ class CameraAR(mglw.WindowConfig):
         self.texture.use(location=0)
         self.vao_cube.render()
 
+
         # Render hand landmarks
-        for landmarks in converted_landmarks:
+        if converted_landmarks:  # Only render if we have valid landmarks
+            for landmarks in converted_landmarks:
+                for point_idx, point in enumerate(landmarks):
+                    # Skip rendering if any coordinates are NaN
+                    if np.isnan(point).any():
+                        continue
+
+                    # Only render specific landmarks (you can modify which ones)
+                    # For example, render only fingertips (indices 4, 8, 12, 16, 20) and some knuckles
+                    important_landmarks = [0, 4, 5, 8, 9, 12, 13, 16, 17, 20]
+                    if point_idx not in important_landmarks:
+                        continue
+
+                    marker_translate = Matrix44.from_translation(point)
+                    marker_scale = Matrix44.from_scale(
+                        (0.5, 0.5, 0.5))  # Slightly larger markers
+                    mvp_marker = proj * marker_translate * marker_scale
+                    self.mvp.write(mvp_marker.astype('f4'))
+
+                    # Color fingertips differently
+                    if point_idx in [4, 8, 12, 16, 20]:  # Fingertips
+                        # Cyan for fingertips
+                        self.color.value = (0.0, 1.0, 1.0)
+                    else:
+                        # Green for other landmarks
+                        self.color.value = (0.0, 1.0, 0.0)
+
+                    self.withTexture.value = False
+                    self.vao_marker.render()
             for point in landmarks:
                 marker_translate = Matrix44.from_translation(point)
                 marker_scale = Matrix44.from_scale((0.25, 0.25, 0.25))
