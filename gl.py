@@ -23,7 +23,7 @@ class CameraAR(mglw.WindowConfig):
     gl_version = (3, 3)
     title = "CameraAR"
     resource_dir = os.path.normpath(os.path.join('./data'))
-    print("resource_dir: ", resource_dir)
+    # print("resource_dir: ", resource_dir)
     previousTime = 0
     currentTime = 0
 
@@ -191,11 +191,11 @@ class CameraAR(mglw.WindowConfig):
                 # Adjust red balance
                 r, g, b = self.color_balance.value
                 self.color_balance.value = (max(0.1, r - 0.05), g, b)
-                print(f"Color balance: {self.color_balance.value}")
+                # print(f"Color balance: {self.color_balance.value}")
             elif key == self.keys.T:
                 r, g, b = self.color_balance.value
                 self.color_balance.value = (min(2.0, r + 0.05), g, b)
-                print(f"Color balance: {self.color_balance.value}")
+                # print(f"Color balance: {self.color_balance.value}")
             elif key == self.keys.G:
                 # Adjust green balance
                 r, g, b = self.color_balance.value
@@ -204,16 +204,16 @@ class CameraAR(mglw.WindowConfig):
             elif key == self.keys.H:
                 r, g, b = self.color_balance.value
                 self.color_balance.value = (r, min(2.0, g + 0.05), b)
-                print(f"Color balance: {self.color_balance.value}")
+                # print(f"Color balance: {self.color_balance.value}")
             elif key == self.keys.B:
                 # Adjust blue balance
                 r, g, b = self.color_balance.value
                 self.color_balance.value = (r, g, max(0.1, b - 0.05))
-                print(f"Color balance: {self.color_balance.value}")
+                # print(f"Color balance: {self.color_balance.value}")
             elif key == self.keys.N:
                 r, g, b = self.color_balance.value
                 self.color_balance.value = (r, g, min(2.0, b + 0.05))
-                print(f"Color balance: {self.color_balance.value}")
+                # print(f"Color balance: {self.color_balance.value}")
             elif key == self.keys.S:
                 # Decrease saturation
                 self.saturation.value = max(0.0, self.saturation.value - 0.05)
@@ -273,7 +273,7 @@ class CameraAR(mglw.WindowConfig):
         # Process hand landmarks for 3D positioning
         world_landmarks_list = []
         if detection_result is not None and detection_result.hand_landmarks:
-            print(f"Detected {len(detection_result.hand_landmarks)} hands")
+            # print(f"Detected {len(detection_result.hand_landmarks)} hands")
             image_landmarks_list = detection_result.hand_landmarks
             model_landmarks_list = detection_result.hand_world_landmarks
             cam_matrix = get_camera_matrix(
@@ -310,14 +310,14 @@ class CameraAR(mglw.WindowConfig):
             # Calculate distances
             thumb_index_distance = np.linalg.norm(thumb_tip - index_tip)
             index_cube_distance = np.linalg.norm(index_tip - self.object_pos)
-            print(
-                f"Thumb-Index distance: {thumb_index_distance:.2f}, Index-Cube distance: {index_cube_distance:.2f}")
+            # print(
+            #     f"Thumb-Index distance: {thumb_index_distance:.2f}, Index-Cube distance: {index_cube_distance:.2f}")
 
             is_pinching = thumb_index_distance < pinch_threshold
             if is_pinching:
-                print("Pinch detected!")
+                # print("Pinch detected!")
                 if index_cube_distance < hit_threshold:
-                    print("Object grabbed!")
+                    # print("Object grabbed!")
                     is_grabbed = True
                     self.object_pos = index_tip
 
@@ -382,7 +382,7 @@ class CameraAR(mglw.WindowConfig):
         for landmarks in converted_landmarks:
             for point in landmarks:
                 marker_translate = Matrix44.from_translation(point)
-                marker_scale = Matrix44.from_scale((0.5, 0.5, 0.5))
+                marker_scale = Matrix44.from_scale((0.25, 0.25, 0.25))
                 mvp_marker = proj * marker_translate * marker_scale
                 self.mvp.write(mvp_marker.astype('f4'))
                 self.color.value = (0.0, 1.0, 0.0)  # Green markers
