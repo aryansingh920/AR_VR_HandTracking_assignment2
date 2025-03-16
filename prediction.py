@@ -1,129 +1,99 @@
 """
-Created on 15/03/2025
+Created on 16/03/2025
 
 @author: Aryan
 
 Filename: prediction.py
 
-Relative Path: prediction.py
+Relative Path: assignment2/prediction.py
 """
 
-import cv2
 import mediapipe as mp
-import numpy as np
-import time
-
-from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe import solutions
+from mediapipe.framework.formats import landmark_pb2
+# from mediapipe.framework.formats import image_frame  # Import ImageFrame
 
-# ---------------------------
-# Create HandLandmarker
-# ---------------------------
+import numpy as np
+import cv2
+import time
+
+# Create a MediaPipe HandLandmarker detector.
+# Note: To support both hands detection, you may change num_hands to 2.
 base_options = python.BaseOptions(model_asset_path='hand_landmarker.task')
-options = vision.HandLandmarkerOptions(
-    base_options=base_options,
-    num_hands=2,  # detect up to 2 hands
-    min_hand_detection_confidence=0.5,
-    min_hand_presence_confidence=0.5
-)
+options = vision.HandLandmarkerOptions(base_options=base_options, num_hands=2)
 detector = vision.HandLandmarker.create_from_options(options)
 
-# For drawing
-mp_drawing = mp.solutions.drawing_utils
-mp_styles = mp.solutions.drawing_styles
-mp_hands = mp.solutions.hands
 
-
-class DetectionResult:
+def predict(frame):
     """
-    Container for hand detection results:
-      - hand_landmarks: list of 21 normalized 2D landmarks per hand.
-      - model_landmarks_list: list of 21 3D landmarks (model space in meters) per hand.
+    Task 1: Implement hand landmark prediction.
+    Convert the NumPy array to a MediaPipe Image and pass it to the detector.
     """
-
-    def __init__(self):
-        self.hand_landmarks = []         # List of 2D landmark lists
-        self.model_landmarks_list = []   # List of 3D landmark lists
-
-
-def predict(frame_rgb):
-    """
-    Task 1: Predict hand landmarks using MediaPipe.
-    Wrap the frame into an mp.Image with proper image_format.
-    """
-    frame_rgb = frame_rgb.astype(np.uint8)
-    mp_image = mp.Image(
-        image_format=mp.ImageFormat.SRGB,
-        data=frame_rgb
-    )
-
+    # Convert the frame to a MediaPipe Image object
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
     results = detector.detect(mp_image)
-    detection_result = DetectionResult()
-
-    # Use 'hand_landmarks' and 'hand_world_landmarks' per the new API
-    if results.hand_landmarks:
-        for landm_2d in results.hand_landmarks:
-            detection_result.hand_landmarks.append(landm_2d)
-        for landm_3d in results.hand_world_landmarks:
-            detection_result.model_landmarks_list.append(landm_3d)
-
-    return detection_result
+    return results
 
 
-def draw_landmarks_on_image(image_bgr, detection_result):
+def draw_landmarks_on_image(image, detection_result):
     """
-    Draw the 2D hand landmarks onto the BGR image.
+    A helper function to draw the detected 2D landmarks on an image.
     """
-    if not detection_result or not detection_result.hand_landmarks:
-        return image_bgr
+    if not detection_result:
+        return image
 
-    for hand_landmarks in detection_result.hand_landmarks:
+    hand_landmarks_list = detection_result.hand_landmarks
+    # Loop through detected hands and draw landmarks on the image.
+    for idx in range(len(hand_landmarks_list)):
+        hand_landmarks = hand_landmarks_list[idx]
         hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
         hand_landmarks_proto.landmark.extend([
-            landmark_pb2.NormalizedLandmark(x=l.x, y=l.y, z=l.z) for l in hand_landmarks
+            landmark_pb2.NormalizedLandmark(
+                x=landmark.x, y=landmark.y, z=landmark.z)
+            for landmark in hand_landmarks
         ])
-        mp_drawing.draw_landmarks(
-            image_bgr,
+        solutions.drawing_utils.draw_landmarks(
+            image,
             hand_landmarks_proto,
-            mp_hands.HAND_CONNECTIONS,
-            mp_styles.get_default_hand_landmarks_style(),
-            mp_styles.get_default_hand_connections_style()
-        )
-    return image_bgr
+            solutions.hands.HAND_CONNECTIONS,
+            solutions.drawing_styles.get_default_hand_landmarks_style(),
+            solutions.drawing_styles.get_default_hand_connections_style())
+    return image
 
 
 def get_camera_matrix(frame_width, frame_height, scale=1.0):
     """
-    Estimate an intrinsic camera matrix.
+    Compute the 3x3 camera intrinsic matrix.
     """
     focal_length = frame_width * scale
     center = (frame_width / 2.0, frame_height / 2.0)
     camera_matrix = np.array(
         [[focal_length, 0, center[0]],
          [0, focal_length, center[1]],
-         [0, 0, 1]],
-        dtype=np.float64
+         [0, 0, 1]], dtype="double"
     )
     return camera_matrix
 
 
 def get_fov_y(camera_matrix, frame_height):
     """
-    Compute vertical field-of-view for OpenGL.
+    Compute the vertical field of view from the camera matrix.
     """
-    focal_length_y = camera_matrix[1, 1]
-    fov_y = np.rad2deg(2.0 * np.arctan2(frame_height / 2.0, focal_length_y))
+    focal_length_y = camera_matrix[1][1]
+    fov_y = np.rad2deg(2 * np.arctan2(frame_height, 2 * focal_length_y))
     return fov_y
 
 
 def get_matrix44(rvec, tvec):
     """
-    Convert rotation (rvec) and translation (tvec) to a 4x4 transformation matrix.
+    Convert rotation and translation vectors into a 4x4 transformation matrix.
     """
+    rvec = np.asarray(rvec)
+    tvec = np.asarray(tvec)
+    T = np.eye(4)
     R, _ = cv2.Rodrigues(rvec)
-    T = np.eye(4, dtype=np.float32)
     T[:3, :3] = R
     T[:3, 3] = tvec.reshape(3)
     return T
@@ -131,85 +101,79 @@ def get_matrix44(rvec, tvec):
 
 def solvepnp(model_landmarks_list, image_landmarks_list, camera_matrix, frame_width, frame_height):
     """
-    Task 2: Use solvePnP to align 3D model landmarks to 2D image coordinates.
-    Returns a list of transformed 3D landmarks (in camera space, scaled to centimeters).
+    Solve for global rotation and translation to map hand model points to camera space.
     """
-    if not model_landmarks_list or not image_landmarks_list:
+    if not model_landmarks_list:
         return []
 
     world_landmarks_list = []
-    for (model3d, image2d) in zip(model_landmarks_list, image_landmarks_list):
-        model_points = np.float32([[lm.x, lm.y, lm.z] for lm in model3d])
-        image_points = np.float32(
-            [[lm2d.x * frame_width, lm2d.y * frame_height] for lm2d in image2d])
 
-        dist_coeffs = None
-        success, rvec, tvec = cv2.solvePnP(
-            model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
-        if success:
-            R, _ = cv2.Rodrigues(rvec)
-            new_world = []
-            for p in model_points:
-                p_cm = p * 100.0  # convert meters to centimeters
-                p_cam = R @ p_cm + tvec.reshape(3)
-                new_world.append(p_cam)
-            new_world = np.array(new_world, dtype=np.float32)
-            world_landmarks_list.append(new_world)
-        else:
-            world_landmarks_list.append(model_points)
+    for (model_landmarks, image_landmarks) in zip(model_landmarks_list, image_landmarks_list):
+        # Convert landmarks to NumPy arrays.
+        model_points = np.float32([[l.x, l.y, l.z] for l in model_landmarks])
+        image_points = np.float32(
+            [[l.x * frame_width, l.y * frame_height] for l in image_landmarks])
+
+        # Solve PnP: estimate rvec and tvec.
+        retval, rvec, tvec = cv2.solvePnP(
+            model_points, image_points, camera_matrix, None)
+        if retval:
+            T = get_matrix44(rvec, tvec)
+            ones = np.ones((model_points.shape[0], 1), dtype=np.float32)
+            model_points_hom = np.hstack([model_points, ones])
+            world_points_hom = (T @ model_points_hom.T).T
+            # Convert from meters to centimeters.
+            world_points = world_points_hom[:, :3] * 100.0
+            world_landmarks_list.append(world_points)
 
     return world_landmarks_list
 
 
 def reproject(world_landmarks_list, image_landmarks_list, camera_matrix, frame_width, frame_height):
     """
-    Reproject the transformed 3D landmarks back to 2D.
-    Returns the average reprojection error and a list of 2D points.
+    Reproject 3D world landmarks to the image plane for visualization.
     """
     reprojection_points_list = []
-    total_error = 0.0
-    count = 0
-
-    for (world_pts, image_lms) in zip(world_landmarks_list, image_landmarks_list):
-        if len(world_pts) == 0:
-            reprojection_points_list.append([])
-            continue
-
-        world_pts_3f = world_pts.reshape((-1, 1, 3))
-        dist_coeffs = None
-        image_points_2f = np.float32(
-            [[lm2d.x * frame_width, lm2d.y * frame_height] for lm2d in image_lms]).reshape((-1, 1, 2))
-
-        success, rvec, tvec = cv2.solvePnP(
-            world_pts, image_points_2f, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
-        if not success:
-            reprojection_points_list.append([])
-            continue
-
-        reprojected, _ = cv2.projectPoints(
-            world_pts_3f, rvec, tvec, camera_matrix, dist_coeffs)
-        reprojected = reprojected.reshape(-1, 2)
-        reprojection_points_list.append(reprojected)
-
-        gt_2d = image_points_2f.reshape(-1, 2)
-        error = np.mean(np.linalg.norm(reprojected - gt_2d, axis=1))
-        total_error += error
-        count += 1
-
-    avg_error = total_error / max(count, 1)
-    return avg_error, reprojection_points_list
+    reprojection_error = 0.0
+    for (world_landmarks, image_landmarks) in zip(world_landmarks_list, image_landmarks_list):
+        output = world_landmarks.dot(camera_matrix.T)
+        output[:, 0] /= output[:, 2]
+        output[:, 1] /= output[:, 2]
+        reprojection_points_list.append(output[:, :2])
+        image_points = np.float32(
+            [[l.x * frame_width, l.y * frame_height] for l in image_landmarks])
+        reprojection_error += np.linalg.norm(output[:, :2] - image_points) / len(
+            output) / len(world_landmarks_list)
+    return reprojection_error, reprojection_points_list
 
 
-def check_pinch_gesture(hand_landmarks_2d):
-    """
-    Simple pinch detection: if the thumb tip and index fingertip are close.
-    Assumes hand_landmarks_2d is a list of 21 normalized landmarks.
-    """
-    if len(hand_landmarks_2d) != 21:
-        return False
-    thumb = hand_landmarks_2d[4]
-    index = hand_landmarks_2d[8]
-    dx = thumb.x - index.x
-    dy = thumb.y - index.y
-    dist = (dx**2 + dy**2) ** 0.5
-    return dist < 0.04
+if __name__ == '__main__':
+    # Example main function to display video and hand landmarks using OpenCV.
+    capture = cv2.VideoCapture(0)
+    previousTime = 0
+    currentTime = 0
+
+    while capture.isOpened():
+        ret, frame = capture.read()
+        aspect_ratio = frame.shape[1] / frame.shape[0]
+        frame = cv2.resize(frame, (int(720 * aspect_ratio), 720))
+        frame = cv2.flip(frame, 1)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        detection_result = predict(frame_rgb)
+        frame = draw_landmarks_on_image(frame, detection_result)
+
+        # (Optional) SolvePnP and reproject landmarks here for debugging.
+
+        currentTime = time.time()
+        fps = 1 / (currentTime - previousTime)
+        previousTime = currentTime
+        cv2.putText(frame, str(int(fps)) + " FPS", (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        cv2.imshow("", frame)
+
+        if cv2.waitKey(5) & 0xFF == 27:
+            break
+
+    capture.release()
+    cv2.destroyAllWindows()

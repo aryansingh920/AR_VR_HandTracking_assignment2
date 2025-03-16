@@ -11,6 +11,27 @@ Relative Path: faceHandTrack.py
 import cv2
 import time
 import prediction
+import numpy as np
+
+
+def check_pinch_gesture(hand_landmarks):
+    """
+    Detects if the user is performing a pinch gesture.
+    
+    A pinch occurs when the thumb tip is close to the index finger tip.
+    """
+    if len(hand_landmarks) < 2:
+        return False  # Not enough landmarks detected
+
+    thumb_tip = np.array(
+        [hand_landmarks[4].x, hand_landmarks[4].y])  # Thumb tip
+    # Index finger tip
+    index_tip = np.array([hand_landmarks[8].x, hand_landmarks[8].y])
+
+    distance = np.linalg.norm(thumb_tip - index_tip)
+
+    # Threshold for pinch detection (adjust as necessary)
+    return distance < 0.05
 
 
 def run_opencv_hand_tracking():
@@ -50,31 +71,35 @@ def run_opencv_hand_tracking():
         # 2) Use solvePnP to align 3D landmarks to the image
         frame_height, frame_width = frame_bgr.shape[:2]
         camera_matrix = prediction.get_camera_matrix(frame_width, frame_height)
-        world_landmarks_list = prediction.solvepnp(
-            model_landmarks_list=detection_result.model_landmarks_list,
-            image_landmarks_list=detection_result.hand_landmarks,
-            camera_matrix=camera_matrix,
-            frame_width=frame_width,
-            frame_height=frame_height
-        )
 
-        # 3) Reproject the 3D landmarks back to 2D to check alignment
-        repro_error, repro_points_list = prediction.reproject(
-            world_landmarks_list,
-            detection_result.hand_landmarks,
-            camera_matrix,
-            frame_width,
-            frame_height
-        )
+        # Ensure hand_world_landmarks exist
+        if hasattr(detection_result, 'hand_world_landmarks') and detection_result.hand_world_landmarks:
+            world_landmarks_list = prediction.solvepnp(
+                model_landmarks_list=detection_result.hand_world_landmarks,
+                image_landmarks_list=detection_result.hand_landmarks,
+                camera_matrix=camera_matrix,
+                frame_width=frame_width,
+                frame_height=frame_height
+            )
 
-        # Draw the reprojected landmarks in red
-        for pts2d in repro_points_list:
-            for (px, py) in pts2d:
-                cv2.circle(frame_bgr, (int(px), int(py)), 5, (0, 0, 255), -1)
+            # 3) Reproject the 3D landmarks back to 2D to check alignment
+            repro_error, repro_points_list = prediction.reproject(
+                world_landmarks_list,
+                detection_result.hand_landmarks,
+                camera_matrix,
+                frame_width,
+                frame_height
+            )
+
+            # Draw the reprojected landmarks in red
+            for pts2d in repro_points_list:
+                for (px, py) in pts2d:
+                    cv2.circle(frame_bgr, (int(px), int(py)),
+                               5, (0, 0, 255), -1)
 
         # (Optional) Basic pinch detection on the first hand if available
-        if detection_result.hand_landmarks:
-            is_pinching = prediction.check_pinch_gesture(
+        if hasattr(detection_result, 'hand_landmarks') and detection_result.hand_landmarks:
+            is_pinching = check_pinch_gesture(
                 detection_result.hand_landmarks[0])
             gesture_text = "Pinch" if is_pinching else "No Pinch"
             cv2.putText(
